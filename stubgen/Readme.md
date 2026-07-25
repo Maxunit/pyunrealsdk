@@ -12,6 +12,7 @@ python -m stubgen WILLOW
 Alternatively, if you set up your python path appropriately, you can run it programmatically.
 ```py
 import stubgen
+
 stubgen.generate(stubgen.Flavour.OAK, Path("output"))
 ```
 

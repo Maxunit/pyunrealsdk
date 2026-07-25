@@ -17,7 +17,7 @@ from unrealsdk.unreal import BoundFunction, UObject, WrappedStruct
 ] %}
 {{ classes | declare_all }}
 
-type _HookBlockSignal = None | Block | type[Block]
+type _HookBlockSignal = Block | type[Block] | None
 type _PreHookCallback = Callable[
     [UObject, WrappedStruct, Any, BoundFunction],
     _HookBlockSignal | tuple[_HookBlockSignal, Any],

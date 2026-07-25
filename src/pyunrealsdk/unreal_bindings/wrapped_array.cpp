@@ -223,7 +223,7 @@ void register_wrapped_array(py::module_& mod) {
                  "    key: A one-arg function used to extract a comparison key.\n"
                  "    reverse: If true, the list is sorted as if each comparison were reversed.\n"),
              PYUNREALSDK_STUBGEN_KW_ONLY(),
-             PYUNREALSDK_STUBGEN_ARG("key"_a, "None | Callable[[T], Any]", "None") = py::none{},
+             PYUNREALSDK_STUBGEN_ARG("key"_a, "Callable[[T], Any] | None", "None") = py::none{},
              PYUNREALSDK_STUBGEN_ARG("reverse"_a, "bool", "False") = false)
         .def(PYUNREALSDK_STUBGEN_METHOD("_get_address", "int"), &impl::array_py_getaddress,
              PYUNREALSDK_STUBGEN_DOCSTRING("Gets the address of this array, for debugging.\n"

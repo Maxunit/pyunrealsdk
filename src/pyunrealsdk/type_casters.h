@@ -42,7 +42,8 @@ const void* downcast_unreal(const unrealsdk::unreal::FField* src, const std::typ
  */
 py::object cast(unrealsdk::unreal::UObject* src);
 py::object cast(unrealsdk::unreal::FField* src);
-py::object cast(unrealsdk::unreal::WrappedStruct* src);
+py::object cast(const unrealsdk::unreal::WrappedStruct& src);
+py::object cast(unrealsdk::unreal::WrappedStruct&& src);
 
 /**
  * @brief Casts a python object to an unreal object.
@@ -58,6 +59,8 @@ template <>
 unrealsdk::unreal::UObject* cast<unrealsdk::unreal::UObject*>(const py::object& src);
 template <>
 unrealsdk::unreal::FField* cast<unrealsdk::unreal::FField*>(const py::object& src);
+template <>
+unrealsdk::unreal::WrappedStruct cast<unrealsdk::unreal::WrappedStruct>(const py::object& src);
 
 #endif
 

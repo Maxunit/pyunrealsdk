@@ -40,8 +40,9 @@ const void* downcast_unreal(const FField* src, const std::type_info*& type) {
 #endif
 
 PYUNREALSDK_CAPI(PyObject*, cast_from_object, UObject* src);
-PYUNREALSDK_CAPI(PyObject*, cast_from_struct, WrappedStruct* src);
 PYUNREALSDK_CAPI(PyObject*, cast_from_ffield, FField* src);
+PYUNREALSDK_CAPI(PyObject*, cast_from_struct_ref, const WrappedStruct* src);
+PYUNREALSDK_CAPI(PyObject*, cast_from_struct_move, WrappedStruct* src);
 
 #ifdef PYUNREALSDK_INTERNAL
 
@@ -54,15 +55,24 @@ PYUNREALSDK_CAPI(PyObject*, cast_from_object, UObject* src) {
     obj.inc_ref();
     return obj.ptr();
 }
-PYUNREALSDK_CAPI(PyObject*, cast_from_struct, WrappedStruct* src) {
+PYUNREALSDK_CAPI(PyObject*, cast_from_ffield, FField* src) {
     const py::gil_scoped_acquire gil{};
     auto obj = py::cast(src);
     obj.inc_ref();
     return obj.ptr();
 }
-PYUNREALSDK_CAPI(PyObject*, cast_from_ffield, FField* src) {
+
+PYUNREALSDK_CAPI(PyObject*, cast_from_struct_ref, const WrappedStruct* src) {
+    auto new_ref = src->copy_reference();
+
     const py::gil_scoped_acquire gil{};
-    auto obj = py::cast(src);
+    auto obj = py::cast(std::move(new_ref));
+    obj.inc_ref();
+    return obj.ptr();
+}
+PYUNREALSDK_CAPI(PyObject*, cast_from_struct_move, WrappedStruct* src) {
+    const py::gil_scoped_acquire gil{};
+    auto obj = py::cast(std::move(*src));
     obj.inc_ref();
     return obj.ptr();
 }
@@ -75,19 +85,27 @@ py::object cast(UObject* src) {
     const py::gil_scoped_acquire gil{};
     return py::reinterpret_steal<py::object>(PYUNREALSDK_MANGLE(cast_from_object)(src));
 }
-py::object cast(WrappedStruct* src) {
-    const py::gil_scoped_acquire gil{};
-    return py::reinterpret_steal<py::object>(PYUNREALSDK_MANGLE(cast_from_struct)(src));
-}
 py::object cast(FField* src) {
     const py::gil_scoped_acquire gil{};
     return py::reinterpret_steal<py::object>(PYUNREALSDK_MANGLE(cast_from_ffield)(src));
+}
+
+py::object cast(const WrappedStruct& src) {
+    const py::gil_scoped_acquire gil{};
+    return py::reinterpret_steal<py::object>(PYUNREALSDK_MANGLE(cast_from_struct_ref)(&src));
+}
+py::object cast(WrappedStruct&& src) {
+    auto local_struct = std::move(src);
+    const py::gil_scoped_acquire gil{};
+    return py::reinterpret_steal<py::object>(
+        PYUNREALSDK_MANGLE(cast_from_struct_move)(&local_struct));
 }
 
 #endif
 
 PYUNREALSDK_CAPI(UObject*, cast_to_object, PyObject* src);
 PYUNREALSDK_CAPI(FField*, cast_to_ffield, PyObject* src);
+PYUNREALSDK_CAPI(WrappedStruct*, cast_to_struct, PyObject* src);
 
 #ifdef PYUNREALSDK_INTERNAL
 
@@ -104,6 +122,12 @@ PYUNREALSDK_CAPI(FField*, cast_to_ffield, PyObject* src) {
     return py::cast<FField*>(py::reinterpret_borrow<py::object>(src));
 }
 
+PYUNREALSDK_CAPI(WrappedStruct*, cast_to_struct, PyObject* src) {
+    const py::gil_scoped_acquire gil{};
+    // Note we're casting to a pointer - we're getting a pointer to the struct inside the py object
+    return py::cast<WrappedStruct*>(py::reinterpret_borrow<py::object>(src));
+}
+
 #else
 
 template <>
@@ -113,6 +137,12 @@ UObject* cast<UObject*>(const py::object& src) {
 template <>
 FField* cast<FField*>(const py::object& src) {
     return PYUNREALSDK_MANGLE(cast_to_ffield)(src.ptr());
+}
+template <>
+WrappedStruct cast<WrappedStruct>(const py::object& src) {
+    auto struct_pointer = PYUNREALSDK_MANGLE(cast_to_struct)(src.ptr());
+    // Since this is a pointer to inside the python object, need to create a new "concrete" instance
+    return struct_pointer->copy_reference();
 }
 
 #endif

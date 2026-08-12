@@ -370,7 +370,12 @@ void register_base_bindings(py::module_& mod) {
     mod.def(
         PYUNREALSDK_STUBGEN_FUNC("load_package", "UObject"),
         [](const std::wstring& name, uint32_t flags) {
-            return unrealsdk::load_package(name, flags);
+            UObject* ret = nullptr;
+            {
+                const py::gil_scoped_release gil;
+                ret = unrealsdk::load_package(name, flags);
+            }
+            return ret;
         },
         PYUNREALSDK_STUBGEN_DOCSTRING(
             "Loads a package, and all it's contained objects.\n"

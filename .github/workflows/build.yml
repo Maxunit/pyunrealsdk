@@ -1,276 +1,87 @@
-name: CI
+name: OAK2 DefPtr null-guard test build
 
-on: [
-  push,
-  pull_request,
-  workflow_dispatch
-]
+on:
+  push:
+    branches:
+      - test/gbx-defptr-null-guard-oak2
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
-  build-windows:
+  oak2:
     runs-on: windows-latest
-
-    strategy:
-      fail-fast: false
-      matrix:
-        preset: [
-          "clang-willow-release",
-          "clang-willow64-release",
-          "clang-oak-release",
-          "clang-oak2-release",
-          "msvc-willow-release",
-          "msvc-willow64-release",
-          "msvc-oak-release",
-          "msvc-oak2-release",
-        ]
-
     steps:
-    - name: Setup Clang
-      if: startswith(matrix.preset, 'clang')
-      uses: egor-tensin/setup-clang@v1
+      - name: Setup Clang
+        uses: egor-tensin/setup-clang@v1
 
-    - name: Add MSVC to PATH
-      if: startswith(matrix.preset, 'msvc')
-      uses: TheMrMilchmann/setup-msvc-dev@v4
-      with:
-        arch: ${{ fromJSON('["x64", "x86"]')[contains(matrix.preset, '-willow-')] }}
+      - name: Setup CMake and Ninja
+        uses: lukka/get-cmake@latest
 
-    - name: Setup CMake and Ninja
-      uses: lukka/get-cmake@latest
-
-    - name: Checkout repository and submodules
-      uses: actions/checkout@v6
-      with:
-        submodules: recursive
-
-    - name: Configure build
-      run: cmake . --preset ${{ matrix.preset }} -G Ninja
-
-    - name: Build
-      run: cmake --build out/build/${{ matrix.preset }}
-
-  build-ubuntu:
-    runs-on: ubuntu-latest
-
-    strategy:
-      fail-fast: false
-      matrix:
-        toolchain:
-          - preset: clang-cross-willow-release
-            container: clang-cross
-          - preset: clang-cross-willow64-release
-            container: clang-cross
-          - preset: clang-cross-oak-release
-            container: clang-cross
-          - preset: clang-cross-oak2-release
-            container: clang-cross
-          - preset: llvm-mingw-willow-release
-            container: llvm-mingw
-          - preset: llvm-mingw-willow64-release
-            container: llvm-mingw
-          - preset: llvm-mingw-oak-release
-            container: llvm-mingw
-          - preset: llvm-mingw-oak2-release
-            container: llvm-mingw
-          - preset: mingw-willow-release
-            container: mingw
-          - preset: mingw-willow64-release
-            container: mingw
-          - preset: mingw-oak-release
-            container: mingw
-          - preset: mingw-oak2-release
-            container: mingw
-
-    steps:
-      - name: Checkout repository and submodules
+      - name: Checkout Python SDK and pinned dependencies
         uses: actions/checkout@v6
         with:
           submodules: recursive
 
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v4
+      - name: Checkout corrected unrealsdk
+        uses: actions/checkout@v6
         with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          repository: Maxunit/unrealsdk
+          ref: 6e9ecfc46c610cf758b1b60195514b5e32514e53
+          path: libs/unrealsdk
+          submodules: recursive
 
-      - name: Build
-        uses: devcontainers/ci@v0.3
+      - name: Verify null guard before compilation
+        shell: pwsh
+        run: |
+          $source = Get-Content libs/unrealsdk/src/unrealsdk/unreal/properties/zgbxdefptrproperty.cpp -Raw
+          if (-not $source.Contains('if (prop_cls != nullptr && !value.type->inherits(prop_cls)) {')) {
+            throw 'Expected FGbxDefPtr null guard missing'
+          }
+
+      - name: Configure OAK2 with debug symbols
+        run: cmake . --preset clang-oak2-release -G Ninja
+
+      - name: Build SDK DLLs
+        run: cmake --build out/build/clang-oak2-release --target pyunrealsdk unrealsdk
+
+      - name: Stage install
+        run: cmake --install out/build/clang-oak2-release --prefix out/staging
+
+      - name: Package DLLs, symbols and provenance
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force out/artifact | Out-Null
+          foreach ($name in @('unrealsdk.dll', 'pyunrealsdk.dll', 'unrealsdk.pdb', 'pyunrealsdk.pdb')) {
+            $file = Join-Path out/staging $name
+            if (-not (Test-Path $file)) { throw "Missing required build file: $name" }
+            Copy-Item $file out/artifact/
+          }
+          @(
+            'OAK2 experimental FGbxDefPtr null guard'
+            "pyunrealsdk repository: ${{ github.repository }}"
+            "pyunrealsdk commit: ${{ github.sha }}"
+            'unrealsdk repository: Maxunit/unrealsdk'
+            'unrealsdk commit: 6e9ecfc46c610cf758b1b60195514b5e32514e53'
+            'Preset: clang-oak2-release (RelWithDebInfo, x64)'
+            'Python build dependency: 3.14.3 (existing upstream preset)'
+            'Scope: one null guard in ZGbxDefPtrProperty::set'
+            'No in-game validation has been performed.'
+            'Exit the game before replacement. Keep backups of both original DLLs.'
+            'Replace both SDK DLLs together in their existing plugin directory.'
+            'Retain both PDB files for crash analysis. Do not change Python or mod-manager files.'
+            'This guard does not establish that NPC brain access or v103 is safe.'
+          ) | Set-Content out/artifact/BUILD_INFO.txt -Encoding utf8
+          Get-ChildItem out/artifact -File |
+            Get-FileHash -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash)  $(Split-Path $_.Path -Leaf)" } |
+            Set-Content out/artifact/SHA256SUMS.txt -Encoding utf8
+
+      - name: Upload OAK2 SDK test download
+        uses: actions/upload-artifact@v6
         with:
-          cacheFrom: ghcr.io/bl-sdk/${{ matrix.toolchain.container }}:latest
-          configFile: .devcontainer/${{ matrix.toolchain.container }}/devcontainer.json
-          push: never
-          # The git watcher cmake thinks something's unsafe? Doesn't happen to me locally.
-          runCmd: |
-            git config --global --add safe.directory `pwd`
-            git config --global --add safe.directory `pwd`/libs/unrealsdk
-
-            cmake . --preset ${{ matrix.toolchain.preset }} -G Ninja
-            cmake --build out/build/${{ matrix.toolchain.preset }}
-
-# ==============================================================================
-
-  stubgen:
-    runs-on: ubuntu-latest
-
-    strategy:
-      fail-fast: false
-      matrix:
-        flavour:
-          - WILLOW
-          - OAK
-          - OAK2
-
-    steps:
-    - name: Checkout repository and submodules
-      uses: actions/checkout@v6
-      with:
-        submodules: recursive
-
-    - name: Setup Python
-      uses: actions/setup-python@v6
-      with:
-        python-version: ">=3.13"
-
-    - name: Generate stubs
-      run: |
-        pip install -r stubgen/requirements.txt
-        python -m stubgen ${{ matrix.flavour }}
-
-    - name: Run pyright
-      uses: jakebailey/pyright-action@v3
-      with:
-        extra-args: ./stubgen/.out
-
-    # Realistically these ought to always work cause the script runs them itself to format the stubs
-    - name: Run Ruff Linting
-      uses: astral-sh/ruff-action@v4.0.0
-      with:
-        src: ./stubgen/.out
-
-    - name: Run Ruff Formatting
-      uses: astral-sh/ruff-action@v4.0.0
-      with:
-        src: ./stubgen/.out
-        args: format --check
-
-# ==============================================================================
-
-  clang-tidy:
-    runs-on: windows-latest
-
-    strategy:
-      fail-fast: false
-      matrix:
-        preset: [
-          "clang-willow-release",
-          "clang-willow64-release",
-          "clang-oak-release",
-          "clang-oak2-release",
-        ]
-
-    steps:
-    - name: Setup Clang
-      uses: egor-tensin/setup-clang@v1
-
-    - name: Setup CMake and Ninja
-      uses: lukka/get-cmake@latest
-
-    - name: Setup Python
-      uses: actions/setup-python@v6
-      with:
-        python-version: ">=3.13"
-
-    # Needed pyyaml for clang tidy to enable `-export-fixes`
-    - name: Install pip packages
-      run: pip install pyyaml
-
-    - name: Checkout repository and submodules
-      uses: actions/checkout@v6
-      with:
-        submodules: recursive
-
-    - name: Configure CMake
-      run: cmake . --preset ${{ matrix.preset }} -DCMAKE_DISABLE_PRECOMPILE_HEADERS=On
-
-    - name: Remove `.modmap`s from compile commands
-      run: |
-        (Get-Content "out\build\${{ matrix.preset }}\compile_commands.json")    `
-          -replace "@CMakeFiles.+?\.modmap", ""                                 `
-        | Set-Content                                                           `
-          -Path "out\build\${{ matrix.preset }}\compile_commands.json"
-
-    - name: Run clang-tidy
-      run: |
-        python (Get-Command run-clang-tidy).Source                              `
-          -p "out\build\${{ matrix.preset }}"                                   `
-          -export-fixes clang-tidy-fixes.yml                                    `
-          $([Regex]::Escape("$pwd\src") + ".+\.(c|cpp|h|hpp)$")
-
-    - name: Process clang-tidy warnings
-      uses: asarium/clang-tidy-action@v1
-      with:
-        fixesFile: clang-tidy-fixes.yml
-
-  clang-format:
-    runs-on: windows-latest
-
-    steps:
-    - name: Setup Clang
-      uses: egor-tensin/setup-clang@v1
-
-    - name: Checkout repository
-      uses: actions/checkout@v6
-
-    - name: Run clang-format
-      run: |
-        clang-format                                                            `
-          -n -Werror                                                            `
-          $(Get-ChildItem                                                       `
-              src                                                               `
-              -File                                                             `
-              -Recurse                                                          `
-              -Include ("*.c", "*.cpp", "*.h", "*.hpp")                         `
-            | % FullName)
-
-  spelling:
-    runs-on: ubuntu-latest
-
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v6
-
-    - name: Check spelling
-      uses: crate-ci/typos@master
-
-  pyright:
-    runs-on: ubuntu-latest
-
-    steps:
-    - name: Checkout repository and submodules
-      uses: actions/checkout@v6
-      with:
-        submodules: recursive
-
-    - name: Run pyright
-      uses: jakebailey/pyright-action@v3
-      with:
-        extra-args: ./stubgen
-
-  ruff:
-    runs-on: ubuntu-latest
-
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v6
-
-    - name: Run Ruff Linting
-      uses: astral-sh/ruff-action@v4.0.0
-      with:
-        src: ./stubgen
-
-    - name: Run Ruff Formatting
-      uses: astral-sh/ruff-action@v4.0.0
-      with:
-        src: ./stubgen
-        args: format --check
+          name: OAK2-SDK-DefPtr-NullGuard
+          path: out/artifact/
+          if-no-files-found: error
+          retention-days: 30
